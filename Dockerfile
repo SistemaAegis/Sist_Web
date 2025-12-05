@@ -11,8 +11,7 @@ WORKDIR /app
 # Copiar archivos de lock/configuración
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
 
-# Instalar dependencias de manera condicional. Usamos --legacy-peer-deps para resolver
-# el conflicto de dependencias (como el de date-fns/react-day-picker).
+# Instalar dependencias de manera condicional.
 RUN \
   if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
   elif [ -f package-lock.json ]; then npm ci --legacy-peer-deps; \
@@ -21,7 +20,6 @@ RUN \
   fi
 
 # -------------------- STAGE 3: BUILDER (Compilar) --------------------
-# Esta etapa es crucial para compilar tu aplicación Next.js.
 FROM base AS builder
 WORKDIR /app
 # Copiar node_modules instalados en la etapa 'deps'
@@ -30,9 +28,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Comando para compilar la aplicación Next.js
-# Esto crea la carpeta .next/standalone si next.config.js está configurado.
 RUN npm run build 
-# Si usas Yarn: RUN yarn build
 
 # -------------------- STAGE 4: RUNNER (Producción Final) --------------------
 # Imagen final, solo con lo necesario para ejecutar la aplicación
@@ -45,10 +41,9 @@ RUN adduser --system --uid 1001 nextjs
 USER nextjs
 
 ENV NODE_ENV production
-ENV PORT 3000
+# CRÍTICO: Eliminamos 'ENV PORT 3000' para que Next.js use la variable PORT inyectada por Render.
 
-# 🎯 Copiar Standalone Output (incluye código compilado y dependencias esenciales)
-# Esto es más eficiente que copiar node_modules, ya que Standalone solo incluye lo que se usa.
+# Copiar Standalone Output 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static 
