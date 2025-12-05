@@ -1,0 +1,102 @@
+name: Despliegue a PRODUCCIÓN 
+
+on:
+  # 1. Ejecuta cuando se hace PUSH directo a la rama 'main' (Menos común/seguro)
+  push:
+    branches:
+      - main
+      
+  # 2. Ejecuta cuando un Pull Request es CERRADO (fusionado o no)
+  #    Esto se usa para desencadenar el despliegue de PRODUCCIÓN.
+  pull_request:
+    branches:
+      - main
+    types: 
+      - closed # Solo cuando el PR es cerrado
+
+jobs:
+  # Job de condición: Solo despliega si el Pull Request fue fusionado
+  check-merge:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    outputs:
+      should_deploy: 'true'
+      
+    steps:
+      - name: Verificar Fusión
+        run: echo "Despliegue activado. Se procede con la construcción y el despliegue."
+
+  ## 1. Job: Construir y Publicar la Solución en Docker
+  build-and-push:
+    needs: check-merge
+    # Solo se ejecuta si el job de verificación dice que debe desplegar
+    if: needs.check-merge.outputs.should_deploy == 'true' 
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout del Código
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Configurar QEMU y Buildx
+        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Login a DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 📦 Construir y Publicar Frontend (Raíz)
+        uses: docker/build-push-action@v5
+        with:
+          context: . 
+          push: true
+          # Usamos la misma etiqueta
+          tags: ${{ secrets.DOCKER_USER}}/frontend_next:latest 
+          platforms: linux/amd64
+
+    outputs:
+      docker_user: ${{ secrets.DOCKER_USER}}
+      
+
+  ## 2. Job: Despliegue a Render
+  deploy-to-render:
+    needs: [check-merge, build-and-push] 
+    if: success() && needs.check-merge.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🚀 Iniciar Despliegue en Render (PROD)
+        uses: JorgeLNJunior/render-deploy@v1.4.6
+        with:
+          # Usamos el SERVICE_ID de Producción
+          service_id: ${{ secrets.RENDER_SERVICE_ID_MAIN }} 
+          api_key: ${{ secrets.RENDER_API_KEY }}
+          wait_deploy: true 
+
+  ## 3. Job: Notificación por Correo
+  notify-result:
+    if: always() 
+    needs: [deploy-to-render] 
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📧 Enviar Notificación (Éxito o Fallo)
+        uses: dawidd6/action-send-mail@v3
+        with:
+          subject: |
+            ${{ contains(needs.deploy-to-render.result, 'failure') && '❌ FALLO' || '✅ ÉXITO' }} Despliegue a PRODUCCIÓN (Main)
+          to: ${{ secrets.EMAIL_RECIPIENT }}
+          from: ${{ secrets.MAIL_USERNAME }}
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          body: |
+            **Estado del Pipeline:** ${{ contains(needs.deploy-to-render.result, 'failure') && 'FALLIDO' || 'EXITOSO' }}
+            **Ambiente Desplegado:** PRODUCCIÓN (Main)
+            **Detalles del Despliegue:**
+            - Repositorio: ${{ github.repository }}
+            - Commit: ${{ github.sha }}
+            - Enlace al Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
