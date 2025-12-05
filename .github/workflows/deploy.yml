@@ -72,7 +72,7 @@ jobs:
         uses: JorgeLNJunior/render-deploy@v1.4.6
         with:
           # Usamos el SERVICE_ID de Producción
-          service_id: ${{ secrets.RENDER_SERVICE_ID_MAIN }} 
+          service_id: ${{ secrets.RENDER_SERVICE_ID}} 
           api_key: ${{ secrets.RENDER_API_KEY }}
           wait_deploy: true 
 
