@@ -1,38 +1,14 @@
-name: Despliegue a PRODUCCIÓN
+name: Despliegue a Render
 
 on:
-  # **ELIMINAR:** Ya no queremos que se active por un PUSH directo a main,
-  # ya que el MERGE ya es un PUSH.
-  # push:
-  #   branches:
-  #     - main
-      
-  # 2. Ejecuta solo cuando un Pull Request es cerrado (fusionado)
   pull_request:
     branches:
       - main
-    types: 
-      - closed # Solo cuando el PR es cerrado (puede ser fusionado o no)
+
 
 jobs:
-  # Job de condición: Solo despliega si el Pull Request fue FUSIONADO
-  check-merge:
-    runs-on: ubuntu-latest
-    # CRÍTICO: Eliminar la condición de 'push' aquí y solo enfocarse en el merge del PR.
-    # El flujo solo se activa si el PR fue cerrado Y si fue fusionado.
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
-    outputs:
-      should_deploy: 'true'
-      
-    steps:
-      - name: Verificar Fusión
-        run: echo "Despliegue activado. Se procede con la construcción y el despliegue a PRODUCCIÓN."
-
   ## 1. Job: Construir y Publicar la Solución en Docker
   build-and-push:
-    needs: check-merge
-    # Solo se ejecuta si el job de verificación dice que debe desplegar
-    if: needs.check-merge.outputs.should_deploy == 'true' 
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout del Código
@@ -45,39 +21,41 @@ jobs:
       - name: 🔑 Login a DockerHub
         uses: docker/login-action@v3
         with:
+          # Secrets para el login
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: 📦 Construir y Publicar Frontend (Raíz)
+      - name: 📦 Construir y Publicar Imagen Docker (Raíz)
         uses: docker/build-push-action@v5
         with:
+          # Contexto de construcción en la raíz del repositorio
           context: . 
           push: true
-          # Usamos la misma etiqueta
-          tags: ${{ secrets.DOCKER_USER}}/frontend_next:latest 
+          # Etiqueta de la imagen
+          tags: ${{ secrets.DOCKER_USER}}/front_next:latest 
           platforms: linux/amd64
 
     outputs:
       docker_user: ${{ secrets.DOCKER_USER}}
-      
-
+       
   ## 2. Job: Despliegue a Render
   deploy-to-render:
-    needs: [check-merge, build-and-push] 
-    if: success() && needs.check-merge.outputs.should_deploy == 'true'
+    needs: build-and-push # Espera a que la imagen se haya subido
     runs-on: ubuntu-latest
     
     steps:
-      - name: 🚀 Iniciar Despliegue en Render (PROD)
+      - name: 🚀 Iniciar Despliegue en Render
         uses: JorgeLNJunior/render-deploy@v1.4.6
         with:
-          # Usamos el SERVICE_ID de Producción
-          service_id: ${{ secrets.RENDER_SERVICE_ID}} 
+          # Secrets para el despliegue en Render
+          service_id: ${{ secrets.RENDER_SERVICE_ID }} 
           api_key: ${{ secrets.RENDER_API_KEY }}
+          # Espera a que el despliegue termine
           wait_deploy: true 
-
+ 
   ## 3. Job: Notificación por Correo
   notify-result:
+    # Se ejecuta SIEMPRE (incluso si el despliegue falló), gracias a if: always()
     if: always() 
     needs: [deploy-to-render] 
     runs-on: ubuntu-latest
@@ -86,8 +64,9 @@ jobs:
       - name: 📧 Enviar Notificación (Éxito o Fallo)
         uses: dawidd6/action-send-mail@v3
         with:
+          # Asunto dinámico basado en el resultado del job anterior
           subject: |
-            ${{ contains(needs.deploy-to-render.result, 'failure') && '❌ FALLO' || '✅ ÉXITO' }} Despliegue a PRODUCCIÓN (Main)
+            ${{ contains(needs.deploy-to-render.result, 'failure') && '❌ FALLO' || '✅ ÉXITO' }} Despliegue a Render
           to: ${{ secrets.EMAIL_RECIPIENT }}
           from: ${{ secrets.MAIL_USERNAME }}
           server_address: smtp.gmail.com
@@ -97,7 +76,6 @@ jobs:
           password: ${{ secrets.MAIL_PASSWORD }}
           body: |
             **Estado del Pipeline:** ${{ contains(needs.deploy-to-render.result, 'failure') && 'FALLIDO' || 'EXITOSO' }}
-            **Ambiente Desplegado:** PRODUCCIÓN (Main)
             **Detalles del Despliegue:**
             - Repositorio: ${{ github.repository }}
             - Commit: ${{ github.sha }}
