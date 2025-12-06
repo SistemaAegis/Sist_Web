@@ -1,17 +1,17 @@
-name: Despliegue a Render
+name: Despliegue a PRODUCCIÓN (Main Branch)
 
 on:
-  pull_request:
+  # CRÍTICO: Activamos en el evento PUSH a 'main'. 
+  # Esto se dispara inmediatamente después de que se fusiona un PR a 'main'.
+  # Este evento garantiza el acceso completo a las Secrets del repositorio original.
+  push:
     branches:
       - main
-    types:
-      - closed   # Solo cuando se cierre el PR (incluye merge)
-
+      
 jobs:
+  ## 1. Job: Construir y Publicar la Solución en Docker
   build-and-push:
-    if: github.event.pull_request.merged == true  # Solo si se MERGEÓ
     runs-on: ubuntu-latest
-
     steps:
       - name: ⬇️ Checkout del Código
         uses: actions/checkout@v4
@@ -23,33 +23,42 @@ jobs:
       - name: 🔑 Login a DockerHub
         uses: docker/login-action@v3
         with:
+          # Secrets accesibles bajo el evento 'push'
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: 📦 Construir y Publicar Imagen Docker (Raíz)
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: . 
           push: true
-          tags: ${{ secrets.DOCKER_USER }}/front_next:latest
+          tags: ${{ secrets.DOCKER_USER}}/frontend_next:latest 
           platforms: linux/amd64
 
+    outputs:
+      docker_user: ${{ secrets.DOCKER_USER}}
+      
+
+  ## 2. Job: Despliegue a Render
   deploy-to-render:
-    needs: build-and-push
-    if: github.event.pull_request.merged == true
+    needs: build-and-push # Depende de que la imagen se haya subido
     runs-on: ubuntu-latest
     
     steps:
-      - name: 🚀 Iniciar Despliegue en Render
+      - name: 🚀 Iniciar Despliegue en Render (PROD)
         uses: JorgeLNJunior/render-deploy@v1.4.6
         with:
-          service_id: ${{ secrets.RENDER_SERVICE_ID }}
+          # Secrets accesibles bajo el evento 'push'
+          service_id: ${{ secrets.RENDER_SERVICE_ID }} 
           api_key: ${{ secrets.RENDER_API_KEY }}
           wait_deploy: true 
+          
 
+
+  ## 3. Job: Notificación por Correo
   notify-result:
-    if: always() && github.event.pull_request.merged == true
-    needs: deploy-to-render
+    if: always() 
+    needs: [deploy-to-render] 
     runs-on: ubuntu-latest
 
     steps:
@@ -57,7 +66,7 @@ jobs:
         uses: dawidd6/action-send-mail@v3
         with:
           subject: |
-            ${{ contains(needs.deploy-to-render.result, 'failure') && '❌ FALLO' || '✅ ÉXITO' }} Despliegue a Render
+            ${{ contains(needs.deploy-to-render.result, 'failure') && '❌ FALLO' || '✅ ÉXITO' }} Despliegue a PRODUCCIÓN (Main)
           to: ${{ secrets.EMAIL_RECIPIENT }}
           from: ${{ secrets.MAIL_USERNAME }}
           server_address: smtp.gmail.com
@@ -66,7 +75,9 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           body: |
-            Estado del Pipeline: ${{ contains(needs.deploy-to-render.result, 'failure') && 'FALLIDO' || 'EXITOSO' }}
-            Repositorio: ${{ github.repository }}
-            Commit: ${{ github.sha }}
-            Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **Estado del Pipeline:** ${{ contains(needs.deploy-to-render.result, 'failure') && 'FALLIDO' || 'EXITOSO' }}
+            **Ambiente Desplegado:** PRODUCCIÓN (Main)
+            **Detalles del Despliegue:**
+            - Repositorio: ${{ github.repository }}
+            - Commit: ${{ github.sha }}
+            - Enlace al Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
