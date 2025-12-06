@@ -15,11 +15,9 @@ on:
       - closed # Solo cuando el PR es cerrado (puede ser fusionado o no)
 
 jobs:
+
   ## 1. Job: Construir y Publicar la Solución en Docker
   build-and-push:
-    needs: check-merge
-    # Solo se ejecuta si el job de verificación dice que debe desplegar
-    if: needs.check-merge.outputs.should_deploy == 'true' 
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout del Código
